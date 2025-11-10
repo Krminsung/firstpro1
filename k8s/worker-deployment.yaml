@@ -22,8 +22,8 @@ spec:
         
         # 쉘(/bin/sh)을 통해 $REDIS_URL 변수를 해석(expand)
         command: ["/bin/sh", "-c"]
-        # args: ["python -m rq worker -u $REDIS_URL $RQ_QUEUE"]
-        args: ["sleep 3600"]
+        args: ["python -m rq worker -u $REDIS_URL $RQ_QUEUE"]
+
         # 환경 변수 (K8s가 컨테이너에 주입)
         env:
         # --- ★★★ 이 부분이 수정됨 (FQDN) ★★★ ---
