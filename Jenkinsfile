@@ -48,17 +48,17 @@ podTemplate(
             container('kaniko') {
                 // API 이미지 빌드 및 푸시
                 sh """
-                /kaniko/executor --context \`pwd\` \
-                                 --dockerfile Dockerfile.api \
-                                 --destination ${apiImageName} \
+                /kaniko/executor --context \`pwd\` \\
+                                 --dockerfile Dockerfile.api \\
+                                 --destination ${apiImageName} \\
                                  --cache=true
                 """
                 
                 // Worker 이미지 빌드 및 푸시
                 sh """
-                /kaniko/executor --context \`pwd\` \
-                                 --dockerfile Dockerfile.worker \
-                                 --destination ${workerImageName} \
+                /kaniko/executor --context \`pwd\` \\
+                                 --dockerfile Dockerfile.worker \\
+                                 --destination ${workerImageName} \\
                                  --cache=true
                 """
             }
