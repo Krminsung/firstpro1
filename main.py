@@ -8,7 +8,8 @@ app = FastAPI()
 
 # Redis 및 RQ 큐 연결
 # (K8s 내부 DNS 'redis-service'를 사용합니다.)
-redis_conn = Redis(host='redis-service', port=6379)
+# redis_conn = Redis(host='redis-service', port=6379)
+redis_conn = Redis(host='redis-service.default.svc', port=6379) # <-- 수정됨
 q = Queue('jobs', connection=redis_conn)
 
 # --- 워커가 수행할 실제 작업 함수 ---
