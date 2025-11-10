@@ -19,4 +19,5 @@ spec:
       containers:
       - name: worker-container
         image: ms9019/ha-pipeline-worker:latest # 젠킨스가 빌드할 이미지
+        imagePullPolicy: Always
         # (Worker는 CMD로 실행되므로 Probe나 Port가 불필요)
