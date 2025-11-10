@@ -16,7 +16,7 @@ podTemplate(
     // 컨테이너 2: Kubernetes 배포용
     containerTemplate(
       name: 'kubectl', 
-      image: 'bitnami/kubectl:v1.29.15', 
+      image: 'alpine/k8s:1.29.15', 
       command: 'cat', 
       ttyEnabled: true
     )
