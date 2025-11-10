@@ -47,11 +47,11 @@ podTemplate(
 
         stage('Build & Push Images') {
     container('kaniko') {
-        // API 이미지를 한 줄 명령어로 빌드
-        sh "/kaniko/executor --context \`pwd\` --dockerfile Dockerfile.api --destination ${apiImageName} --cache=true"
+        // \`pwd\` 를 \\`pwd\\` 로 변경
+        sh "/kaniko/executor --context \\`pwd\\` --dockerfile Dockerfile.api --destination ${apiImageName} --cache=true"
 
-        // Worker 이미지를 한 줄 명령어로 빌드
-        sh "/kaniko/executor --context \`pwd\` --dockerfile Dockerfile.worker --destination ${workerImageName} --cache=true"
+        // \`pwd\` 를 \\`pwd\\` 로 변경
+        sh "/kaniko/executor --context \\`pwd\\` --dockerfile Dockerfile.worker --destination ${workerImageName} --cache=true"
     }
 }
         
