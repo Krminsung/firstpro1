@@ -1,0 +1,22 @@
+# (파일 위치: k8s/worker-deployment.yaml)
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-deployment
+  labels:
+    app: ha-worker
+spec:
+  replicas: 1  # KEDA가 이 숫자를 1~10으로 조절할 예정
+  selector:
+    matchLabels:
+      app: ha-worker
+  template:
+    metadata:
+      labels:
+        app: ha-worker
+    spec:
+      containers:
+      - name: worker-container
+        image: ms9019/ha-pipeline-worker:latest # 젠킨스가 빌드할 이미지
+        # (Worker는 CMD로 실행되므로 Probe나 Port가 불필요)
