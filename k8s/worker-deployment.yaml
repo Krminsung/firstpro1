@@ -20,15 +20,15 @@ spec:
         image: ms9019/ha-pipeline-worker:latest
         imagePullPolicy: Always  # :latest 태그 강제 갱신 (유지)
         
-        # --- ★★★ 이 부분이 수정됨 (shell 형식) ★★★ ---
         # 쉘(/bin/sh)을 통해 $REDIS_URL 변수를 해석(expand)
         command: ["/bin/sh", "-c"]
         args: ["python -m rq worker -u $REDIS_URL $RQ_QUEUE"]
-        # --- 여기까지 ---
         
         # 환경 변수 (K8s가 컨테이너에 주입)
         env:
+        # --- ★★★ 이 부분이 수정됨 (FQDN) ★★★ ---
         - name: REDIS_URL
-          value: "redis://redis-service:6379"
+          value: "redis://redis-service.default.svc:6379" # '.default.svc' 추가
+        # --- 여기까지 ---
         - name: RQ_QUEUE
           value: "jobs"
