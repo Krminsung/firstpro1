@@ -43,26 +43,17 @@ podTemplate(
             }
         }
 
-        // --- 3단계: Kaniko로 이미지 빌드 & 푸시 ---
+        // --- 3단계: Kaniko로 이미지 빌드  & 푸시 ---
+
         stage('Build & Push Images') {
-            container('kaniko') {
-                // API 이미지 빌드 및 푸시
-                sh """
-                /kaniko/executor --context \`pwd\` \\
-                                 --dockerfile Dockerfile.api \\
-                                 --destination ${apiImageName} \\
-                                 --cache=true
-                """
-                
-                // Worker 이미지 빌드 및 푸시
-                sh """
-                /kaniko/executor --context \`pwd\` \\
-                                 --dockerfile Dockerfile.worker \\
-                                 --destination ${workerImageName} \\
-                                 --cache=true
-                """
-            }
-        }
+    container('kaniko') {
+        // API 이미지를 한 줄 명령어로 빌드
+        sh "/kaniko/executor --context \`pwd\` --dockerfile Dockerfile.api --destination ${apiImageName} --cache=true"
+
+        // Worker 이미지를 한 줄 명령어로 빌드
+        sh "/kaniko/executor --context \`pwd\` --dockerfile Dockerfile.worker --destination ${workerImageName} --cache=true"
+    }
+}
         
         // --- 4단계: Kubernetes에 배포 ---
         stage('Deploy') {
