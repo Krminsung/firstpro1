@@ -30,7 +30,7 @@ podTemplate(
         
         // --- 1단계: Git에서 코드 가져오기 ---
         stage('Checkout') {
-            git 'https://github.com/Krminsung/firstpro1.git'
+            checkout sum
         }
 
         // --- 2단계: Docker Hub 인증 설정 (Kaniko용) ---
