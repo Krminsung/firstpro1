@@ -6,11 +6,17 @@ WORKDIR /app
 
 # 3. 의존성 설치 (API와 동일)
 COPY requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
 
-# 4. 소스 코드 복사 (API와 동일)
+# pip을 최신화하고 의존성 설치 (rq와 redis 포함되어 있어야 함)
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# 4. 소스 코드 복사
 COPY . .
 
-# 5. 실행 명령어: 'jobs'라는 이름의 큐를 바라보는 RQ 워커를 실행합니다.
-# (Redis 주소는 K8s 내부 DNS 'redis-service'를 사용합니다.)
+# 5. 기본 환경변수 (필요 시 배포 YAML에서 덮어쓰기 가능)
+ENV REDIS_URL=redis://redis-service:6379 \
+    RQ_QUEUE=jobs
+
+# 6. 실행 명령어: rq 워커 실행 (PATH 문제 방지 위해 python -m rq 사용)
 CMD ["python", "-m", "rq", "worker", "-u", "redis://redis-service:6379", "jobs"]
