@@ -1,4 +1,4 @@
-// Jenkinsfile (Scripted)
+// Jenkinsfile (Scripted) — API/WORKER 이미지를 Kaniko로 각각 빌드/푸시하고 set image로 배포
 
 podTemplate(
   cloud: 'kubernetes',
@@ -13,47 +13,35 @@ podTemplate(
     ),
     containerTemplate(
       name: 'kubectl',
-      image: 'alpine/k8s:1.29.15',
+      image: 'bitnami/kubectl:latest',
       command: 'cat',
       ttyEnabled: true
     )
-  ]
+  ],
+  // 필요하다면 워크스페이스 퍼시스턴트볼륨 설정 추가
 ) {
   node('kaniko-builder') {
-    cleanWs()
+    // ===== 공통 ENV =====
+    def REGISTRY = 'docker.io/ms9019'
+    def API_IMG  = "${REGISTRY}/ha-pipeline-api"
+    def WRK_IMG  = "${REGISTRY}/ha-pipeline-worker"
+    def TAG      = env.BUILD_NUMBER  // 혹은 env.GIT_COMMIT.take(7)
 
-    // 이미지 태그(필요 시 latest 대신 커밋 SHA 등으로 버저닝 권장)
-    def apiImageName    = "ms9019/ha-pipeline-api:latest"
-    def workerImageName = "ms9019/ha-pipeline-worker:latest"
-
-    // --- 1) Git 체크아웃 ---
     stage('Checkout') {
-      // 멀티브랜치 파이프라인이면 아래 한 줄이면 됩니다.
       checkout scm
-
-      // 단일 파이프라인 잡이라면(멀티브랜치가 아니라면) 이 형태를 사용하세요:
-      // git url: 'https://github.com/Krminsung/firstpro1.git', branch: 'main'
     }
 
-    // --- 2) Docker Hub 인증 파일 생성 (Kaniko) ---
-    stage('Setup Docker Creds') {
+    // ===== DockerHub 로그인 (Kaniko용 config.json 생성) =====
+    stage('Registry Login (kaniko auth)') {
       container('kaniko') {
-        withCredentials([usernamePassword(
-          credentialsId: 'dockerhub-credentials',
-          usernameVariable: 'DOCKER_USER',
-          passwordVariable: 'DOCKER_PASS'
-        )]) {
-          // 디렉토리 보장
+        withCredentials([usernamePassword(credentialsId: 'DOCKERHUB_CRED', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
           sh '''
-            set -eu
             mkdir -p /kaniko/.docker
             cat > /kaniko/.docker/config.json <<EOF
             {
               "auths": {
                 "https://index.docker.io/v1/": {
-                  "username": "${DOCKER_USER}",
-                  "password": "${DOCKER_PASS}",
-                  "email": "not@used.com"
+                  "auth": "$(printf "%s:%s" "$DH_USER" "$DH_PASS" | base64)"
                 }
               }
             }
@@ -63,32 +51,52 @@ podTemplate(
       }
     }
 
-    // --- 3) Kaniko Build & Push ---
-    stage('Build & Push Images') {
+    // ===== API 이미지 빌드/푸시 =====
+    stage('Build & Push API') {
       container('kaniko') {
-        // Kaniko 컨텍스트는 현재 워크스페이스로 지정
-        // WORKSPACE는 Jenkins가 자동으로 설정하는 환경변수입니다.
         sh """
           /kaniko/executor \
-            --context "${WORKSPACE}" \
-            --dockerfile Dockerfile.api \
-            --destination ${apiImageName} \
-            --cache=true
-
-          /kaniko/executor \
-            --context "${WORKSPACE}" \
-            --dockerfile Dockerfile.worker \
-            --destination ${workerImageName} \
+            --dockerfile=Dockerfile.api \
+            --context=`pwd` \
+            --destination=${API_IMG}:${TAG} \
             --cache=true
         """
       }
     }
 
-    // --- 4) 쿠버네티스 배포 ---
+    // ===== WORKER 이미지 빌드/푸시 =====
+    stage('Build & Push Worker') {
+      container('kaniko') {
+        sh """
+          /kaniko/executor \
+            --dockerfile=Dockerfile.worker \
+            --context=`pwd` \
+            --destination=${WRK_IMG}:${TAG} \
+            --cache=true
+        """
+      }
+    }
+
+    // ===== 쿠버네티스 배포 (이미지 태그 교체) =====
     stage('Deploy') {
       container('kubectl') {
-        // 클러스터 내에서 ServiceAccount로 실행 중이므로 토큰/CA는 자동 마운트됨
-        sh 'kubectl apply -f k8s/'
+        sh """
+          kubectl -n jenkins set image deploy/api-deployment    api-container=${API_IMG}:${TAG}
+          kubectl -n jenkins set image deploy/worker-deployment worker-container=${WRK_IMG}:${TAG}
+
+          kubectl -n jenkins rollout status deploy/api-deployment
+          kubectl -n jenkins rollout status deploy/worker-deployment
+        """
+      }
+    }
+
+    // (선택) 검증
+    stage('Verify') {
+      container('kubectl') {
+        sh """
+          kubectl get pods -n jenkins -l app=ha-worker -o jsonpath='{range .items[*]}{.metadata.name}{"\\t"}{.spec.containers[0].image}{"\\t"}{.status.containerStatuses[0].imageID}{"\\n"}{end}'
+          kubectl logs -n jenkins -l app=ha-worker -c worker-container --tail=100 || true
+        """
       }
     }
   }
