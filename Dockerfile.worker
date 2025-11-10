@@ -13,4 +13,4 @@ COPY . .
 
 # 5. 실행 명령어: 'jobs'라는 이름의 큐를 바라보는 RQ 워커를 실행합니다.
 # (Redis 주소는 K8s 내부 DNS 'redis-service'를 사용합니다.)
-CMD ["rq", "worker", "-u", "redis://redis-service:6379", "jobs"]
+CMD ["python", "-m", "rq", "worker", "-u", "redis://redis-service:6379", "jobs"]
