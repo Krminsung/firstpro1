@@ -1,0 +1,18 @@
+# (파일 위치: k8s/worker-autoscaler.yaml)
+
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker-redis-scaler
+spec:
+  scaleTargetRef:
+    name: worker-deployment  # Step 3의 Worker Deployment 이름
+  minReplicaCount: 1          # 큐가 비어있으면 1대 유지
+  maxReplicaCount: 10         # 큐가 많아지면 최대 10대까지 확장
+  triggers:
+  - type: redis
+    metadata:
+      # Day 1에 설치한 Redis의 K8s 내부 주소
+      address: redis-service.default.svc:6379 
+      listName: jobs        # main.py/Dockerfile.worker에서 사용한 큐 이름
+      listLength: "5"       # 큐에 Job이 5개 쌓일 때마다 Pod 1개씩 추가
