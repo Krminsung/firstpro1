@@ -6,13 +6,14 @@ WORKDIR /app
 
 # 3. 의존성 설치: 먼저 requirements.txt 파일을 복사하고 설치합니다.
 # (파일이 분리되어 있으면, 코드 변경 시 이 단계를 캐시로 재사용해 빌드 속도가 빨라집니다.)
-COPY requirements.txt requirements.txt
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 4. 소스 코드 복사: 현재 폴더(.)의 모든 소스 코드를 /app 폴더로 복사합니다.
-COPY . .
+COPY main.py .
 
 # 5. 포트 노출: FastAPI가 실행될 8000번 포트를 엽니다.
+ENV PORT=8000
 EXPOSE 8000
 
 # 6. 실행 명령어: uvicorn으로 main.py 안의 app 객체를 실행합니다.
