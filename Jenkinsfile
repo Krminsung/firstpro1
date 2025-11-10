@@ -24,6 +24,7 @@ podTemplate(
     
     // 'kaniko-builder' 라벨을 가진 Pod에서 아래 단계를 실행
     node('kaniko-builder') {
+        cleanWs()
         def apiImageName = "ms9019/ha-pipeline-api:latest"
         def workerImageName = "ms9019/ha-pipeline-worker:latest"
         
