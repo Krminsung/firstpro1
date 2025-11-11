@@ -26,10 +26,10 @@ podTemplate(
     // (Turn 223 로그를 보니 bitnami:latest를 사용 중이셔서, 그것으로 반영했습니다.)
     containerTemplate(
       name: 'kubectl', 
-      image: 'bitnami/kubectl:latest', 
-      command: '/bin/sh',
-      args: '-c cat',
-    //   command: 'cat',
+      image: 'lachlanevenson/k8s-kubectl:v1.30.0', 
+    //   command: '/bin/sh',
+    //   args: '-c cat',
+      command: 'cat',
       ttyEnabled: true,
 
       // --- ★★★ "올바른" 메모리 문법(Syntax)으로 수정 ★★★ ---
