@@ -1,150 +1,194 @@
 // -*- mode: groovy -*-
+// Jenkins on Kubernetes: Kaniko build + K8s rollout + RQ verification
 
-// =================================================================
-// == 1. 빌드 환경 정의 (K8s Agent Pod 템플릿)
-// =================================================================
-podTemplate(
-  label: 'kaniko-builder',
-  namespace: 'jenkins',
-  serviceAccount: 'jenkins-admin', // (Turn 211: 권한 부여)
-  volumes: [
-    emptyDirVolume(mountPath: '/home/jenkins/agent', memory: false)
-  ],
-  containers: [
-    // 컨테이너 1: Docker 이미지 빌드용 (Kaniko)
-    containerTemplate(
-      name: 'kaniko', 
-      image: 'gcr.io/kaniko-project/executor:debug',
-      command: 'cat',
-      ttyEnabled: true,
-      
-      // --- ★★★ "올바른" 메모리 문법(Syntax)으로 수정 ★★★ ---
-      resourceRequestMemory: "512Mi",
-      resourceLimitMemory: "1Gi"
-    ),
-    // 컨테이너 2: Kubernetes 배포용 (kubectl)
-    // (Turn 223 로그를 보니 bitnami:latest를 사용 중이셔서, 그것으로 반영했습니다.)
-    containerTemplate(
-      name: 'kubectl', 
-      image: 'alpine/kubectl:1.33.3', 
-    //   command: '/bin/sh',
-    //   args: '-c cat',
-      command: 'cat',
-      ttyEnabled: true,
+pipeline {
+  agent {
+    kubernetes {
+      label 'kaniko-builder'
+      namespace 'jenkins'
+      serviceAccount 'jenkins-admin'
+      defaultContainer 'kubectl'
+      yaml """
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: kaniko-builder
+spec:
+  restartPolicy: Never
+  containers:
+    - name: kaniko
+      image: gcr.io/kaniko-project/executor:debug
+      tty: true
+      command: ['cat']
+      resources:
+        requests:
+          memory: "512Mi"
+        limits:
+          memory: "1Gi"
+      volumeMounts:
+        # Docker registry 인증이 /kaniko/.docker/config.json 에 있다고 가정
+        - name: docker-config
+          mountPath: /kaniko/.docker/
+    - name: kubectl
+      image: bitnami/kubectl:latest
+      tty: true
+      command: ['sh', '-c', 'sleep 365d']
+  volumes:
+    - name: docker-config
+      secret:
+        secretName: docker-config   # <-- 레지스트리 시크릿 이름 (환경에 맞게 수정)
+"""
+    }
+  }
 
-      // --- ★★★ "올바른" 메모리 문법(Syntax)으로 수정 ★★★ ---
-      resourceRequestMemory: "128Mi",
-      resourceLimitMemory: "256Mi"
-    )
-  ]) { // node (Agent) 시작
-  node('kaniko-builder') {
-    // ===== 공통 ENV =====
-    def REGISTRY = 'docker.io/ms9019'
-    def API_IMG  = "${REGISTRY}/ha-pipeline-api"
-    def WRK_IMG  = "${REGISTRY}/ha-pipeline-worker"
-    def TAG      = env.BUILD_NUMBER  // 혹은 env.GIT_COMMIT.take(7)
+  options {
+    timestamps()
+    ansiColor('xterm')
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    timeout(time: 30, unit: 'MINUTES')
+  }
+
+  environment {
+    NAMESPACE       = 'jenkins'
+    DEPLOYMENT      = 'worker-deployment'
+    CONTAINER_NAME  = 'worker-container'
+    APP_LABEL       = 'ha-worker'
+
+    IMAGE_REPO      = 'docker.io/ms9019/ha-pipeline-worker'
+    // 태그는 빌드 번호 + 짧은 커밋 SHA 사용(없으면 빌드번호만)
+    TAG             = "b${env.BUILD_NUMBER}"
+  }
+
+  stages {
 
     stage('Checkout') {
-      checkout scm
-    }
-
-    // ===== DockerHub 로그인 (Kaniko용 config.json 생성) =====
-    stage('Registry Login (kaniko auth)') {
-      container('kaniko') {
-        withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
-          sh '''
-            mkdir -p /kaniko/.docker
-            cat > /kaniko/.docker/config.json <<EOF
-            {
-              "auths": {
-                "https://index.docker.io/v1/": {
-                  "auth": "$(printf "%s:%s" "$DH_USER" "$DH_PASS" | base64)"
-                }
-              }
+      steps {
+        container('kubectl') {
+          checkout scm
+          script {
+            // GIT_COMMIT이 있으면 TAG에 접미사를 더해준다
+            if (env.GIT_COMMIT) {
+              env.TAG = "b${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
             }
-            EOF
-          '''
+            echo "Final image tag: ${env.TAG}"
+          }
         }
       }
     }
 
-    // ===== API 이미지 빌드/푸시 =====
-    stage('Build & Push API') {
-      container('kaniko') {
-        sh """
-          /kaniko/executor \
-            --dockerfile=Dockerfile.api \
-            --context=`pwd` \
-            --destination=${API_IMG}:${TAG} \
-            --cache=false
-        """
+    stage('Build & Push (Kaniko)') {
+      steps {
+        container('kaniko') {
+          sh """
+            set -euo pipefail
+            echo "[KANIKO] building ${IMAGE_REPO}:${TAG}"
+            /kaniko/executor \
+              --context `pwd` \
+              --dockerfile `pwd`/Dockerfile \
+              --destination ${IMAGE_REPO}:${TAG} \
+              --single-snapshot \
+              --cleanup \
+              --verbosity info
+          """
+        }
       }
     }
 
-    // ===== WORKER 이미지 빌드/푸시 =====
-    stage('Build & Push Worker') {
-      container('kaniko') {
-        sh """
-          /kaniko/executor \
-            --dockerfile=Dockerfile.worker \
-            --context=`pwd` \
-            --destination=${WRK_IMG}:${TAG} \
-            --cache=false
-        """
+    // === 배포 전: 이미지 내부에 rq가 들어있는지 1회성 파드로 검증 ===
+    stage('Verify RQ in Image') {
+      steps {
+        container('kubectl') {
+          sh """
+            set -euo pipefail
+            echo "[VERIFY-IMAGE] import rq in one-off pod"
+            kubectl -n ${NAMESPACE} run rq-verify --image=${IMAGE_REPO}:${TAG} \
+              --restart=Never --attach --rm --command -- \
+              sh -lc 'python - <<PY
+import sys
+try:
+    import rq
+    print("RQ_OK", getattr(rq, "__version__", "unknown"))
+    print("PY_OK", sys.version.split()[0])
+except Exception as e:
+    print("RQ_IMPORT_ERROR", e)
+    raise
+PY'
+            echo "[VERIFY-IMAGE] OK"
+          """
+        }
       }
     }
 
-    // ===== 워커 매니페스트 적용 (없으면 생성, 있으면 업데이트) =====
-    stage('Apply Manifests') {
+    stage('Deploy to K8s') {
+      steps {
+        container('kubectl') {
+          sh """
+            set -euo pipefail
+            echo "[DEPLOY] set image ${DEPLOYMENT}/${CONTAINER_NAME} -> ${IMAGE_REPO}:${TAG}"
+            kubectl -n ${NAMESPACE} set image deployment/${DEPLOYMENT} \
+              ${CONTAINER_NAME}=${IMAGE_REPO}:${TAG}
+            echo "[DEPLOY] wait rollout"
+            kubectl -n ${NAMESPACE} rollout status deployment/${DEPLOYMENT} --timeout=180s
+          """
+        }
+      }
+    }
+
+    // === 배포 후: 실제 파드 안에서 rq import 되는지 재확인 ===
+    stage('Verify RQ in Pod') {
+      steps {
+        container('kubectl') {
+          sh """
+            set -euo pipefail
+
+            POD=\\$(kubectl -n ${NAMESPACE} get pods -l app=${APP_LABEL} \\
+                  -o jsonpath='{.items[0].metadata.name}')
+            echo "[VERIFY-POD] target pod: \\$POD"
+
+            kubectl -n ${NAMESPACE} exec \\$POD -c ${CONTAINER_NAME} -- sh -lc '
+              set -e
+              echo "== python & pip =="
+              which python; python -V
+              which pip || true; pip -V || true
+
+              echo "== rq import =="
+              python - <<PY
+import sys
+try:
+    import rq
+    print("RQ_OK", getattr(rq, "__version__", "unknown"))
+except Exception as e:
+    print("RQ_IMPORT_ERROR", e); raise
+PY
+            '
+
+            echo "[VERIFY-POD] OK"
+          """
+        }
+      }
+    }
+  }
+
+  post {
+    failure {
       container('kubectl') {
-        sh '''
-          set -euo pipefail
-          NS=jenkins
-          # 파일에 namespace가 박혀 있으면 그대로, 없으면 -n으로 강제 지정
-          if grep -q '^  namespace:' k8s/worker-deployment.yaml; then
-            kubectl apply -f k8s/worker-deployment.yaml
-          else
-            kubectl -n "$NS" apply -f k8s/worker-deployment.yaml
+        sh """
+          set +e
+          echo "==== DEBUG: events ===="
+          kubectl -n ${NAMESPACE} get events --sort-by=.lastTimestamp | tail -n 50 || true
+          echo "==== DEBUG: pod describe ===="
+          POD=\\$(kubectl -n ${NAMESPACE} get pods -l app=${APP_LABEL} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          if [ -n "\\$POD" ]; then
+            kubectl -n ${NAMESPACE} describe pod \\$POD || true
+            echo "==== DEBUG: last logs (previous) ===="
+            kubectl -n ${NAMESPACE} logs \\$POD -c ${CONTAINER_NAME} --previous --tail=200 || true
           fi
-        '''
-      }
-    }
-
-    // ===== 쿠버네티스 배포 (이미지 태그 교체) =====
-    stage('Deploy') {
-      container('kubectl') {
-        sh """
-          set -euo pipefail
-          NS=jenkins
-          TAG=${TAG}
-          API_IMG=${API_IMG}:\$TAG
-          WRK_IMG=${WRK_IMG}:\$TAG
-
-          # API는 이름 고정
-          kubectl -n "\$NS" set image deploy/api-deployment api-container="\$API_IMG"
-          kubectl -n "\$NS" rollout status deploy/api-deployment
-
-          # 워커는 라벨로 대상 선택 (여러 개면 전부 교체)
-          if kubectl -n "\$NS" get deploy -l app=ha-worker --no-headers 2>/dev/null | grep -q .; then
-            kubectl -n "\$NS" set image deployment -l app=ha-worker worker-container="\$WRK_IMG"
-            for d in \$(kubectl -n "\$NS" get deploy -l app=ha-worker -o name); do
-              kubectl -n "\$NS" rollout status "\$d"
-            done
-          else
-            echo "No worker deployment found (label app=ha-worker). Skipping worker image update."
-          fi
         """
       }
     }
-
-    // (선택) 검증
-    stage('Verify') {
-      container('kubectl') {
-        sh """
-          kubectl get pods -n jenkins -l app=ha-worker -o jsonpath='{range .items[*]}{.metadata.name}{"\\t"}{.spec.containers[0].image}{"\\t"}{.status.containerStatuses[0].imageID}{"\\n"}{end}'
-          kubectl logs -n jenkins -l app=ha-worker -c worker-container --tail=100 || true
-        """
-      }
+    always {
+      echo "Build: ${env.BUILD_TAG}, Image: ${IMAGE_REPO}:${TAG}"
     }
   }
 }
