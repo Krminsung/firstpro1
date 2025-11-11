@@ -6,7 +6,10 @@
 podTemplate(
   label: 'kaniko-builder',
   namespace: 'jenkins',
-  serviceAccount: 'jenkins-admin', // (Turn 211: 권한 부여)
+  
+  // (Turn 240/242) "권한 부족" (CrashLoopBackOff) 해결
+  serviceAccount: 'jenkins-admin', 
+  
   volumes: [
     emptyDirVolume(mountPath: '/home/jenkins/agent', memory: false)
   ],
@@ -18,136 +21,115 @@ podTemplate(
       command: 'cat',
       ttyEnabled: true,
       
-      // --- ★★★ "올바른" 메모리 문법(Syntax)으로 수정 ★★★ ---
-      resourceRequestMemory: "512Mi",
+      // (Turn 235) "exit code -2" (메모리 부족) 해결
+      resourceRequestMemory: "512Mi", 
       resourceLimitMemory: "1Gi"
     ),
     // 컨테이너 2: Kubernetes 배포용 (kubectl)
-    // (Turn 223 로그를 보니 bitnami:latest를 사용 중이셔서, 그것으로 반영했습니다.)
     containerTemplate(
       name: 'kubectl', 
-      image: 'alpine/kubectl:1.33.3', 
-    //   command: '/bin/sh',
-    //   args: '-c cat',
+      image: 'bitnami/kubectl:latest', // (Turn 223 로그 기준)
       command: 'cat',
       ttyEnabled: true,
-
-      // --- ★★★ "올바른" 메모리 문법(Syntax)으로 수정 ★★★ ---
+      
+      // (Turn 235) "exit code -2" (메모리 부족) 해결
       resourceRequestMemory: "128Mi",
       resourceLimitMemory: "256Mi"
     )
-  ]) { // node (Agent) 시작
-  node('kaniko-builder') {
-    // ===== 공통 ENV =====
-    def REGISTRY = 'docker.io/ms9019'
-    def API_IMG  = "${REGISTRY}/ha-pipeline-api"
-    def WRK_IMG  = "${REGISTRY}/ha-pipeline-worker"
-    def TAG      = env.BUILD_NUMBER  // 혹은 env.GIT_COMMIT.take(7)
+  ]) { // "podTemplate" 괄호 시작
 
-    stage('Checkout') {
-      checkout scm
-    }
+    // =================================================================
+    // == 2. 파이프라인 변수 정의
+    // =================================================================
+    node('kaniko-builder') { // "node" 괄호 시작
 
-    // ===== DockerHub 로그인 (Kaniko용 config.json 생성) =====
-    stage('Registry Login (kaniko auth)') {
-      container('kaniko') {
-        withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
-          sh '''
-            mkdir -p /kaniko/.docker
-            cat > /kaniko/.docker/config.json <<EOF
-            {
-              "auths": {
-                "https://index.docker.io/v1/": {
-                  "auth": "$(printf "%s:%s" "$DH_USER" "$DH_PASS" | base64)"
-                }
-              }
-            }
-            EOF
-          '''
+        // (Turn 153) "Stale Cache" (유령 캐시) 해결
+        cleanWs() 
+
+        def API_IMG = "docker.io/ms9019/ha-pipeline-api"
+        def WRK_IMG = "docker.io/ms9019/ha-pipeline-worker"
+        def TAG = "${env.BUILD_NUMBER}" // 이미지 태그 (예: 42)
+
+        // =================================================================
+        // == 3. 파이프라인 스테이지 (CI/CD)
+        // =================================================================
+        
+        // --- 1단계: Git에서 코드 가져오기 ---
+        stage('Checkout') {
+            // (Turn 156) 젠킨스 UI의 Git 설정(ID, Branch)을 그대로 사용
+            checkout scm 
         }
-      }
-    }
 
-    // ===== API 이미지 빌드/푸시 =====
-    stage('Build & Push API') {
-      container('kaniko') {
-        sh """
-          /kaniko/executor \
-            --dockerfile=Dockerfile.api \
-            --context=`pwd` \
-            --destination=${API_IMG}:${TAG} \
-            --cache=false
-        """
-      }
-    }
+        // --- 2단계: Docker Hub 로그인 설정 (Kaniko용) ---
+        stage('Registry Login (kaniko auth)') {
+            container('kaniko') {
+                withCredentials([usernamePassword(
+                    // (Turn 215) 젠킨스에 등록된 ID로 수정
+                    credentialsId: 'dockerhub-credentials', 
+                    passwordVariable: 'DH_PASS',
+                    usernameVariable: 'DH_USER'
+                )]) {
+                    sh """
+                    set -eu
+                    mkdir -p /kaniko/.docker
+                    # Kaniko v1.9.0+ 방식 (base64)
+                    AUTH=\$(printf '%s:%s' "\$DH_USER" "\$DH_PASS" | base64)
+                    cat > /kaniko/.docker/config.json <<EOF
+                    {
+                        "auths": {
+                            "https://index.docker.io/v1/": {
+                                "auth": "\$AUTH"
+                            }
+                        }
+                    }
+                    EOF
+                    """
+                }
+            }
+        }
 
-    // ===== WORKER 이미지 빌드/푸시 =====
-    stage('Build & Push Worker') {
-      container('kaniko') {
-        sh """
-          /kaniko/executor \
-            --dockerfile=Dockerfile.worker \
-            --context=`pwd` \
-            --destination=${WRK_IMG}:${TAG} \
-            --cache=false
-        """
-      }
-    }
+        // --- 3-1단계: API 이미지 빌드 & 푸시 (Kaniko) ---
+        stage('Build & Push API') {
+            container('kaniko') {
+                sh """
+                  set -euo pipefail
+                  # (Turn 237) "Kaniko 오타" 수정
+                  /kaniko/executor --dockerfile=Dockerfile.api \\
+                                   --context=\`pwd\` \\
+                                   --destination=\$API_IMG:\$TAG \\
+                                   --cache=false 
+                """
+            }
+        }
+        
+        // --- 3-2단계: Worker 이미지 빌드 & 푸시 (Kaniko) ---
+        stage('Build & Push Worker') {
+            container('kaniko') {
+                sh """
+                  set -euo pipefail
+                  # (Turn 237) "Kaniko 오타" 수정
+                  /kaniko/executor --dockerfile=Dockerfile.worker \\
+                                   --context=\`pwd\` \\
+                                   --destination=\$WRK_IMG:\$TAG \\
+                                   --cache=false
+                """
+            }
+        }
 
-    // ===== 워커 매니페스트 적용 (없으면 생성, 있으면 업데이트) =====
-    stage('Apply Manifests') {
-      container('kubectl') {
-        sh '''
-          set -euo pipefail
-          NS=jenkins
-          # 파일에 namespace가 박혀 있으면 그대로, 없으면 -n으로 강제 지정
-          if grep -q '^  namespace:' k8s/worker-deployment.yaml; then
-            kubectl apply -f k8s/worker-deployment.yaml
-          else
-            kubectl -n "$NS" apply -f k8s/worker-deployment.yaml
-          fi
-        '''
-      }
-    }
-
-    // ===== 쿠버네티스 배포 (이미지 태그 교체) =====
-    // stage('Deploy') {
-    //   container('kubectl') {
-    //     sh """
-    //       set -euo pipefail
-    //       NS=jenkins
-    //       TAG=${TAG}
-    //       API_IMG=${API_IMG}:\$TAG
-    //       WRK_IMG=${WRK_IMG}:\$TAG
-
-    //       # API는 이름 고정
-    //       kubectl -n "\$NS" set image deploy/api-deployment api-container="\$API_IMG"
-    //       kubectl -n "\$NS" rollout status deploy/api-deployment
-
-    //       # 워커는 라벨로 대상 선택 (여러 개면 전부 교체)
-    //       if kubectl -n "\$NS" get deploy -l app=ha-worker --no-headers 2>/dev/null | grep -q .; then
-    //         kubectl -n "\$NS" set image deployment -l app=ha-worker worker-container="\$WRK_IMG"
-    //         for d in \$(kubectl -n "\$NS" get deploy -l app=ha-worker -o name); do
-    //           kubectl -n "\$NS" rollout status "\$d"
-    //         done
-    //       else
-    //         echo "No worker deployment found (label app=ha-worker). Skipping worker image update."
-    //       fi
-    //     """
-    //   }
-    // }
-
-
-    // --- 4단계: K8s 클러스터에 배포 (Deploy) ---
+        // --- 4단계: K8s 클러스터에 배포 (Deploy) ---
         stage('Deploy') {
             container('kubectl') {
                 sh """
                   set -euo pipefail
                   NS=jenkins
-
-                  # ★★★ "set image" (가짜 치료) 대신 "apply -f" (진짜 치료) 실행 ★★★
+                  
+                  # ★★★ (Turn 246) "set image" (가짜 치료) 대신 "apply -f" (진짜 치료) 실행 ★★★
                   # "k8s/" 폴더의 "모든" YAML (serviceAccountName, command 수정본)을 "적용(Apply)"
                   kubectl -n "\$NS" apply -f k8s/
+
+                  # (젠킨스 UI에 로그를 남기기 위해 'set image'를 "추가"하되, "apply"가 메인)
+                  kubectl -n "\$NS" set image deploy/api-deployment api-container=\$API_IMG:\$TAG
+                  kubectl -n "\$NS" set image deploy/worker-deployment worker-container=\$WRK_IMG:\$TAG
 
                   # "롤링 업데이트"가 완료될 때까지 기다림
                   kubectl -n "\$NS" rollout status deployment/api-deployment --timeout=120s
@@ -156,17 +138,5 @@ podTemplate(
             }
         }
 
-    } // node (Agent) 끝
-} // podTemplate 끝
-
-    // (선택) 검증
-    stage('Verify') {
-      container('kubectl') {
-        sh """
-          kubectl get pods -n jenkins -l app=ha-worker -o jsonpath='{range .items[*]}{.metadata.name}{"\\t"}{.spec.containers[0].image}{"\\t"}{.status.containerStatuses[0].imageID}{"\\n"}{end}'
-          kubectl logs -n jenkins -l app=ha-worker -c worker-container --tail=100 || true
-        """
-      }
-    }
-  }
-}
+    } // "node" 괄호 끝
+} // "podTemplate" 괄호 끝
