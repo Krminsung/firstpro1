@@ -1,26 +1,40 @@
-// Jenkinsfile (Scripted) — API/WORKER 이미지를 Kaniko로 각각 빌드/푸시하고 set image로 배포
+// -*- mode: groovy -*-
 
+// =================================================================
+// == 1. 빌드 환경 정의 (K8s Agent Pod 템플릿)
+// =================================================================
 podTemplate(
-  cloud: 'kubernetes',
   label: 'kaniko-builder',
-  serviceAccount: 'jenkins-admin',
+  namespace: 'jenkins',
+  serviceAccount: 'jenkins-admin', // (Turn 211: 권한 부여)
+  volumes: [
+    emptyDirVolume(mountPath: '/home/jenkins/agent', memory: false)
+  ],
   containers: [
+    // 컨테이너 1: Docker 이미지 빌드용 (Kaniko)
     containerTemplate(
-      name: 'kaniko',
+      name: 'kaniko', 
       image: 'gcr.io/kaniko-project/executor:debug',
       command: 'cat',
-      resources: "memory=1Gi",
-      ttyEnabled: true
+      ttyEnabled: true,
+      
+      // --- ★★★ "올바른" 메모리 문법(Syntax)으로 수정 ★★★ ---
+      resourceRequestMemory: "512Mi",
+      resourceLimitMemory: "1Gi"
     ),
+    // 컨테이너 2: Kubernetes 배포용 (kubectl)
+    // (Turn 223 로그를 보니 bitnami:latest를 사용 중이셔서, 그것으로 반영했습니다.)
     containerTemplate(
-      name: 'kubectl',
-      image: 'bitnami/kubectl:latest',
+      name: 'kubectl', 
+      image: 'bitnami/kubectl:latest', 
       command: 'cat',
-      ttyEnabled: true
+      ttyEnabled: true,
+
+      // --- ★★★ "올바른" 메모리 문법(Syntax)으로 수정 ★★★ ---
+      resourceRequestMemory: "128Mi",
+      resourceLimitMemory: "256Mi"
     )
-  ],
-  // 필요하다면 워크스페이스 퍼시스턴트볼륨 설정 추가
-) {
+  ]) { // node (Agent) 시작
   node('kaniko-builder') {
     // ===== 공통 ENV =====
     def REGISTRY = 'docker.io/ms9019'
