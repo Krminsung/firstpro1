@@ -9,7 +9,7 @@ podTemplate(
       name: 'kaniko',
       image: 'gcr.io/kaniko-project/executor:debug',
       command: 'cat',
-      resources: "memory=1Gi"
+      resources: "memory=1Gi",
       ttyEnabled: true
     ),
     containerTemplate(
