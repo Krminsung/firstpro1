@@ -111,31 +111,53 @@ podTemplate(
     }
 
     // ===== 쿠버네티스 배포 (이미지 태그 교체) =====
-    stage('Deploy') {
-      container('kubectl') {
-        sh """
-          set -euo pipefail
-          NS=jenkins
-          TAG=${TAG}
-          API_IMG=${API_IMG}:\$TAG
-          WRK_IMG=${WRK_IMG}:\$TAG
+    // stage('Deploy') {
+    //   container('kubectl') {
+    //     sh """
+    //       set -euo pipefail
+    //       NS=jenkins
+    //       TAG=${TAG}
+    //       API_IMG=${API_IMG}:\$TAG
+    //       WRK_IMG=${WRK_IMG}:\$TAG
 
-          # API는 이름 고정
-          kubectl -n "\$NS" set image deploy/api-deployment api-container="\$API_IMG"
-          kubectl -n "\$NS" rollout status deploy/api-deployment
+    //       # API는 이름 고정
+    //       kubectl -n "\$NS" set image deploy/api-deployment api-container="\$API_IMG"
+    //       kubectl -n "\$NS" rollout status deploy/api-deployment
 
-          # 워커는 라벨로 대상 선택 (여러 개면 전부 교체)
-          if kubectl -n "\$NS" get deploy -l app=ha-worker --no-headers 2>/dev/null | grep -q .; then
-            kubectl -n "\$NS" set image deployment -l app=ha-worker worker-container="\$WRK_IMG"
-            for d in \$(kubectl -n "\$NS" get deploy -l app=ha-worker -o name); do
-              kubectl -n "\$NS" rollout status "\$d"
-            done
-          else
-            echo "No worker deployment found (label app=ha-worker). Skipping worker image update."
-          fi
-        """
-      }
-    }
+    //       # 워커는 라벨로 대상 선택 (여러 개면 전부 교체)
+    //       if kubectl -n "\$NS" get deploy -l app=ha-worker --no-headers 2>/dev/null | grep -q .; then
+    //         kubectl -n "\$NS" set image deployment -l app=ha-worker worker-container="\$WRK_IMG"
+    //         for d in \$(kubectl -n "\$NS" get deploy -l app=ha-worker -o name); do
+    //           kubectl -n "\$NS" rollout status "\$d"
+    //         done
+    //       else
+    //         echo "No worker deployment found (label app=ha-worker). Skipping worker image update."
+    //       fi
+    //     """
+    //   }
+    // }
+
+
+    // --- 4단계: K8s 클러스터에 배포 (Deploy) ---
+        stage('Deploy') {
+            container('kubectl') {
+                sh """
+                  set -euo pipefail
+                  NS=jenkins
+
+                  # ★★★ "set image" (가짜 치료) 대신 "apply -f" (진짜 치료) 실행 ★★★
+                  # "k8s/" 폴더의 "모든" YAML (serviceAccountName, command 수정본)을 "적용(Apply)"
+                  kubectl -n "\$NS" apply -f k8s/
+
+                  # "롤링 업데이트"가 완료될 때까지 기다림
+                  kubectl -n "\$NS" rollout status deployment/api-deployment --timeout=120s
+                  kubectl -n "\$NS" rollout status deployment/worker-deployment --timeout=120s
+                """
+            }
+        }
+
+    } // node (Agent) 끝
+} // podTemplate 끝
 
     // (선택) 검증
     stage('Verify') {
