@@ -34,7 +34,7 @@ podTemplate(
     // ===== DockerHub 로그인 (Kaniko용 config.json 생성) =====
     stage('Registry Login (kaniko auth)') {
       container('kaniko') {
-        withCredentials([usernamePassword(credentialsId: 'DOCKERHUB_CRED', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
           sh '''
             mkdir -p /kaniko/.docker
             cat > /kaniko/.docker/config.json <<EOF
