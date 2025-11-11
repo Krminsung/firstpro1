@@ -94,15 +94,45 @@ podTemplate(
       }
     }
 
+    // ===== 워커 매니페스트 적용 (없으면 생성, 있으면 업데이트) =====
+    stage('Apply Manifests') {
+      container('kubectl') {
+        sh '''
+          set -euo pipefail
+          NS=jenkins
+          # 파일에 namespace가 박혀 있으면 그대로, 없으면 -n으로 강제 지정
+          if grep -q '^  namespace:' k8s/worker-deployment.yaml; then
+            kubectl apply -f k8s/worker-deployment.yaml
+          else
+            kubectl -n "$NS" apply -f k8s/worker-deployment.yaml
+          fi
+        '''
+      }
+    }
+
     // ===== 쿠버네티스 배포 (이미지 태그 교체) =====
     stage('Deploy') {
       container('kubectl') {
         sh """
-          kubectl -n jenkins set image deploy/api-deployment    api-container=${API_IMG}:${TAG}
-          kubectl -n jenkins set image deploy/worker-deployment worker-container=${WRK_IMG}:${TAG}
+          set -euo pipefail
+          NS=jenkins
+          TAG=${TAG}
+          API_IMG=${API_IMG}:\$TAG
+          WRK_IMG=${WRK_IMG}:\$TAG
 
-          kubectl -n jenkins rollout status deploy/api-deployment
-          kubectl -n jenkins rollout status deploy/worker-deployment
+          # API는 이름 고정
+          kubectl -n "\$NS" set image deploy/api-deployment api-container="\$API_IMG"
+          kubectl -n "\$NS" rollout status deploy/api-deployment
+
+          # 워커는 라벨로 대상 선택 (여러 개면 전부 교체)
+          if kubectl -n "\$NS" get deploy -l app=ha-worker --no-headers 2>/dev/null | grep -q .; then
+            kubectl -n "\$NS" set image deployment -l app=ha-worker worker-container="\$WRK_IMG"
+            for d in \$(kubectl -n "\$NS" get deploy -l app=ha-worker -o name); do
+              kubectl -n "\$NS" rollout status "\$d"
+            done
+          else
+            echo "No worker deployment found (label app=ha-worker). Skipping worker image update."
+          fi
         """
       }
     }
