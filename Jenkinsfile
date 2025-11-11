@@ -27,7 +27,9 @@ podTemplate(
     containerTemplate(
       name: 'kubectl', 
       image: 'bitnami/kubectl:latest', 
-      command: 'cat',
+      command: '/bin/sh',
+      args: '-c cat',
+    //   command: 'cat',
       ttyEnabled: true,
 
       // --- ★★★ "올바른" 메모리 문법(Syntax)으로 수정 ★★★ ---
