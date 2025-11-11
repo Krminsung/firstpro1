@@ -26,7 +26,7 @@ podTemplate(
     // (Turn 223 로그를 보니 bitnami:latest를 사용 중이셔서, 그것으로 반영했습니다.)
     containerTemplate(
       name: 'kubectl', 
-      image: 'rancher/kubectl:v1.32.9', 
+      image: 'alpine/kubectl:1.33.3', 
     //   command: '/bin/sh',
     //   args: '-c cat',
       command: 'cat',
