@@ -3,5 +3,6 @@ fastapi
 uvicorn[standard]
 
 # Redis 큐 및 워커용
-rq
-redis
+rq==1.16.2
+redis>=5.0
+
