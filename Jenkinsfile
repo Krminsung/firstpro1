@@ -89,7 +89,7 @@ podTemplate(
             --dockerfile=Dockerfile.worker \
             --context=`pwd` \
             --destination=${WRK_IMG}:${TAG} \
-            --cahce=false
+            --cache=false
         """
       }
     }
