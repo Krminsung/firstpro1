@@ -1,5 +1,5 @@
 // -*- mode: groovy -*-
-// Jenkins on Kubernetes: Kaniko build + K8s rollout + RQ verification
+// Jenkins on Kubernetes: Kaniko build + K8s rollout + RQ verification (escaped $)
 
 pipeline {
   agent {
@@ -27,7 +27,6 @@ spec:
         limits:
           memory: "1Gi"
       volumeMounts:
-        # Docker registry 인증이 /kaniko/.docker/config.json 에 있다고 가정
         - name: docker-config
           mountPath: /kaniko/.docker/
     - name: kubectl
@@ -37,7 +36,7 @@ spec:
   volumes:
     - name: docker-config
       secret:
-        secretName: docker-config   # <-- 레지스트리 시크릿 이름 (환경에 맞게 수정)
+        secretName: docker-config
 """
     }
   }
@@ -56,7 +55,6 @@ spec:
     APP_LABEL       = 'ha-worker'
 
     IMAGE_REPO      = 'docker.io/ms9019/ha-pipeline-worker'
-    // 태그는 빌드 번호 + 짧은 커밋 SHA 사용(없으면 빌드번호만)
     TAG             = "b${env.BUILD_NUMBER}"
   }
 
@@ -67,7 +65,6 @@ spec:
         container('kubectl') {
           checkout scm
           script {
-            // GIT_COMMIT이 있으면 TAG에 접미사를 더해준다
             if (env.GIT_COMMIT) {
               env.TAG = "b${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
             }
@@ -142,8 +139,7 @@ PY'
           sh """
             set -euo pipefail
 
-            POD=\\$(kubectl -n ${NAMESPACE} get pods -l app=${APP_LABEL} \\
-                  -o jsonpath='{.items[0].metadata.name}')
+            POD=\\$(kubectl -n ${NAMESPACE} get pods -l app=${APP_LABEL} -o jsonpath='{.items[0].metadata.name}')
             echo "[VERIFY-POD] target pod: \\$POD"
 
             kubectl -n ${NAMESPACE} exec \\$POD -c ${CONTAINER_NAME} -- sh -lc '
@@ -177,12 +173,17 @@ PY
           set +e
           echo "==== DEBUG: events ===="
           kubectl -n ${NAMESPACE} get events --sort-by=.lastTimestamp | tail -n 50 || true
+
           echo "==== DEBUG: pod describe ===="
           POD=\\$(kubectl -n ${NAMESPACE} get pods -l app=${APP_LABEL} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
           if [ -n "\\$POD" ]; then
             kubectl -n ${NAMESPACE} describe pod \\$POD || true
             echo "==== DEBUG: last logs (previous) ===="
             kubectl -n ${NAMESPACE} logs \\$POD -c ${CONTAINER_NAME} --previous --tail=200 || true
+
+            echo "==== DEBUG: events for the pod (sed) ===="
+            # sed 의 \\$p (라인 끝부터 출력) 도 반드시 이스케이프 필요
+            kubectl -n ${NAMESPACE} describe pod \\$POD | sed -n '/Events:/,\\$p' || true
           fi
         """
       }
