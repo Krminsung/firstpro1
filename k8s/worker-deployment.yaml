@@ -15,6 +15,7 @@ spec:
       labels:
         app: ha-worker
     spec:
+      serviceAccountName: jenkins-admin
       containers:
       - name: worker-container
         image: ms9019/ha-pipeline-worker:latest
