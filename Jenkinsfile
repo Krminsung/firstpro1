@@ -76,7 +76,7 @@ podTemplate(
             --dockerfile=Dockerfile.api \
             --context=`pwd` \
             --destination=${API_IMG}:${TAG} \
-            --no-cache
+            --cache=false
         """
       }
     }
@@ -89,7 +89,7 @@ podTemplate(
             --dockerfile=Dockerfile.worker \
             --context=`pwd` \
             --destination=${WRK_IMG}:${TAG} \
-            --no-cache
+            --cahce=false
         """
       }
     }
